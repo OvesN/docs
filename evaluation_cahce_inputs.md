@@ -156,13 +156,6 @@ If a notification-based design is chosen, use one shared change service per root
 | Manifest validation | Cross-platform; any cache lifetime | Re-read/re-probe/re-enumerate recorded inputs and compare with stored observations. Any mismatch sets the entry stale. | Portable correctness fallback, but highest I/O/CPU cost. Use on detector uncertainty rather than every healthy server-local hit. |
 | Persistent native FSEvents IDs | macOS; possible future persistent optimization | Persist a per-volume event ID, read events since it, and stale affected subtrees. Dropped events, root changes, ID discontinuity, or coalescing uncertainty require validation/broad invalidation. | Requires native interop; events remain hints rather than complete current-state proof. |
 
-Candidate platform choices:
-
-| OS | Normal change source | Fallback on uncertainty |
-| --- | --- | --- |
-| Windows | USN journal when available; `FileSystemWatcher` otherwise | Broad root invalidation or manifest validation |
-| Linux | `FileSystemWatcher` over `inotify` | Manifest validation or a host snapshot/delta token; Linux has no generally available durable journal |
-| macOS | `FileSystemWatcher` over FSEvents | Broad subtree/root invalidation or manifest validation; persistent FSEvents IDs are a later option |
 
 
 ---
@@ -180,11 +173,6 @@ Candidate platform choices:
 
 ### 3. SDK resolution inputs
 
-```text
-SDK request from project
-  -> resolver chooses an SdkResult
-  -> MSBuild loads the returned SDK files and values
-```
 
 `SdkResult` can contain success/failure, one or more paths, a version, properties, items with metadata, and environment values.
 
@@ -197,7 +185,7 @@ SDK request from project
 | SDK resolution result and private resolver state | The returned `SdkResult` can add paths, properties, items, metadata, and environment values. **Example:** a resolver returns an additional SDK path and `PropertiesToAdd["WorkloadEnabled"]="true"`. | Complete result fingerprint, resolver identity, and resolver-provided dependency/private-state token |
 | Resolved SDK files | MSBuild evaluates files returned by the result. **Example:** `Sdk.props` and `Sdk.targets`. | Exact paths of all SDK files read during evaluation |
 
-**Reuse:** A contract between MSBuild and SDK resolvers will be introduced to determine whether cached SDK results can be safely reused, including how to detect dependency changes such as edits to `NuGet.config`. Imported `Sdk.props`/`Sdk.targets` also need filesystem validation.
+**Invalidation:** A contract between MSBuild and SDK resolvers will be introduced to determine whether cached SDK results can be safely reused.
 
 ---
 
@@ -224,7 +212,7 @@ Use one immutable raw request-environment snapshot for supported environment API
 | Existing registry value | `$(Registry:HKEY_LOCAL_MACHINE\Software\Contoso@InstallPath)` supplies an import path. | Registry key and value |
 | Missing registry key/value | A missing `Contoso@InstallPath` makes evaluation use a default path. | Requested registry key/value and that it is missing |
 
-**Invalidation:** A changed, added, or deleted value invalidates the cache entry. Measure whether rereading the value before reuse is cheaper and simpler than registry change notifications.
+**Invalidation:** We can use registry change notifications or just reread the value before cache use again.
 
 ---
 
