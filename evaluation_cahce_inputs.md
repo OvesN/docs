@@ -10,9 +10,10 @@ Context: [evaluation-cache epic](https://github.com/dotnet/msbuild/issues/14234)
 
 ## Input stability overview
 
-The first design question is whether an input is expected to change during normal development or within one **inner development loop**.
+The first design question is whether an input is expected to change during normal development.
 
-Here, an inner loop means repeated edit/build runs in the same checkout and server, with the same configuration, target framework, other request settings, request environment, and installed tools. Under those assumptions, some generally mutable inputs are usually stable. This is not immutability: another process, a restore, or a changed build request can still change them. Request values remain keyed or validated; a short cache lifetime does not prove that inputs stayed unchanged.
+One of the scenarious we are interested in is an inner development loop.
+An inner loop means repeated edit/build runs in the same checkout and server, with the same configuration, target framework, other request settings, request environment, and installed tools. Under those assumptions, some generally mutable inputs are usually stable. This is not immutability: another process, a restore, or a changed build request can still change them.
 
 | Evaluation input | Expected to change between builds? | Within a fixed inner dev loop | Stored as |
 | --- | --- | --- | --- |
@@ -26,23 +27,21 @@ Here, an inner loop means repeated edit/build runs in the same checkout and serv
 | Complete global properties and other request-specific build settings | Yes | Stable while all request settings stay fixed; a changed request needs a different key | Candidate key |
 | Windows Registry values read during evaluation | Yes | Usually stable without installation/configuration changes; other processes can still edit them | Evaluation entry observation |
 | Filesystem metadata or accessibility state used by evaluation | Yes | Mutable, including timestamps changed by ordinary edits | Evaluation entry observation |
-| Unsaved IDE/object-model project state | Yes | Mutable in an IDE loop; absent from disk-only CLI evaluation | Evaluation entry observation |
 | Installed SDK files such as `Sdk.props` and `Sdk.targets` | No, normally stable | Usually stable while the installation is unchanged | Evaluation entry observation |
 | Other existing files under the selected installed .NET SDK | No, normally stable | Usually stable while the installation is unchanged | Evaluation entry observation |
 | Contents of an already extracted versioned NuGet package | No, normally stable | Usually stable; cache cleanup, replacement, or extraction can change them | Evaluation entry observation |
 | Installed framework tools and reference assemblies | No, normally stable | Usually stable while the installation is unchanged | Evaluation entry observation |
 | Default SDK resolver binaries/manifests under the MSBuild installation | No, normally stable | Usually stable while the installation is unchanged | Evaluation entry observation |
-| Server-lifetime values such as machine name and the server process command line | No, normally stable | Assumed stable for this server; not every machine setting is process-constant | Server/cache scope |
+| Unsaved IDE/object-model project state | Yes | Mutable in an IDE loop; absent from disk-only CLI evaluation | Evaluation entry observation |
 
 
-**Candidate key** values are available before source loading. **Evaluation entry observations** are discovered during evaluation and stored beside the cached result. **Server/cache scope** values are assumed constant while this in-memory server cache exists.
-
-Normally stable SDK/package files can still change. Skipping their checks needs an explicit installation-state lifetime or change detector, not merely a low expectation of edits.
-
+**Candidate key** values are available before source loading. **Evaluation entry observations** are discovered during evaluation and stored beside the cached result. 
 
 ## Candidate cache key
 
 Cache lookup happens before MSBuild loads the root project XML, selects the effective toolset, or resolves SDKs. The lookup key must therefore contain only cheap values already available from the build request.
+
+The normalized project path, complete global properties, and toolset version already form MSBuild’s project-configuration key.
 
 
 ```mermaid
