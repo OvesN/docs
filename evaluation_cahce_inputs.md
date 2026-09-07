@@ -22,9 +22,10 @@ An inner loop means repeated edit/build runs in the same checkout and server, wi
 | Restore-generated imports under `obj`, such as `*.nuget.g.props` and `*.nuget.g.targets` | Yes | Usually stable until restore or its inputs change | Evaluation entry observation |
 | File/directory existence results from `Exists()` and import probes | Yes | Mutable: edits, generation, cleanup, and restore can change them | Evaluation entry observation |
 | Directory contents and glob expansions | Yes | Mutable: adding, removing, or renaming files changes membership | Evaluation entry observation |
-| Imported MSBuild environment properties | Yes | Usually stable for an unchanged request environment; still part of the key | Candidate key |
+| Imported MSBuild environment properties | Yes | Usually stable for an unchanged request environment; must remain compatible | Evaluation context |
 | Environment variables read on demand through property functions | Yes | Usually stable for an unchanged request environment; still need validation | Evaluation entry observation |
-| Complete global properties and other request-specific build settings | Yes | Stable while all request settings stay fixed; a changed request needs a different key | Candidate key |
+| Complete global properties | Yes | Stable while global properties stay fixed; changed properties need a different key | Candidate key |
+| Other request-specific evaluation settings | Yes | Usually stable for the same build request; must remain compatible | Evaluation context |
 | Windows Registry values read during evaluation | Yes | Usually stable without installation/configuration changes; other processes can still edit them | Evaluation entry observation |
 | Filesystem metadata or accessibility state used by evaluation | Yes | Mutable, including timestamps changed by ordinary edits | Evaluation entry observation |
 | Installed SDK files such as `Sdk.props` and `Sdk.targets` | No, normally stable | Usually stable while the installation is unchanged | Evaluation entry observation |
@@ -35,64 +36,52 @@ An inner loop means repeated edit/build runs in the same checkout and server, wi
 | Unsaved IDE/object-model project state | Yes | Mutable in an IDE loop; absent from disk-only CLI evaluation | Evaluation entry observation |
 
 
-**Candidate key** values are available before source loading. **Evaluation entry observations** are discovered during evaluation and stored beside the cached result. 
+**Candidate key** identifies the project configuration. **Evaluation context** describes the settings under which it was evaluated. **Evaluation entry observations** describe the dependencies discovered during evaluation.
 
 ## Candidate cache key
 
-Cache lookup happens before MSBuild loads the root project XML, selects the effective toolset, or resolves SDKs. The lookup key must therefore contain only cheap values already available from the build request.
-
 The normalized project path, complete global properties, and toolset version already form MSBuild’s project-configuration key.
 
+Keep this identity as the lookup key. It selects a candidate without loading project XML or resolving its dependencies again; matching it alone does not authorize reuse.
 
 ```mermaid
 flowchart LR
     Project["<b>Normalized project path</b>"]
     Globals["<b>Complete global properties</b>"]
-    Tools["<b>Requested/default ToolsVersion<br/>and explicitness</b>"]
-    Settings["Load settings<br/>and interactive mode"]
-    BuiltIns["Startup/working directories<br/>and node count"]
-    Environment["MSBuild environment-property<br/>fingerprint"]
-    Culture["Culture and UI-culture<br/>names"]
-    Semantics["Evaluation-semantics ID"]
-    Provider["Project source kind<br/>or host provider ID"]
+    Tools["<b>Tools version</b>"]
 
-    Key["ProjectEvaluationLookupKey"]
+    Key["Project-configuration key"]
 
     Project --> Key
     Globals --> Key
     Tools --> Key
-    Settings --> Key
-    BuiltIns --> Key
-    Environment --> Key
-    Culture --> Key
-    Semantics --> Key
-    Provider --> Key
 
     classDef core fill:#fff3cd,stroke:#9a6700,stroke-width:3px,color:#000000,font-weight:bold
-    classDef advanced fill:#f6f8fa,stroke:#8c959f,color:#57606a
     classDef key fill:#ddf4ff,stroke:#0969da,stroke-width:2px,font-weight:bold
 
     class Project,Globals,Tools core
-    class Settings,BuiltIns,Environment,Culture,Semantics,Provider advanced
     class Key key
 ```
 
 | Candidate-key input | Existing MSBuild source | Rule |
 | --- | --- | --- |
-| Project path | `BuildRequestConfiguration.ProjectFullPath` | Normalize the default-disk path. A non-default source uses a stable provider ID; its content/version remains entry metadata. |
+| Project path | `BuildRequestConfiguration.ProjectFullPath` | Use the normalized path for disk-backed projects. |
 | Complete global properties | `BuildRequestConfiguration.GlobalProperties` | Include every property using MSBuild's case-insensitive name semantics and exact values. |
-| Requested/default tools version | `BuildRequestConfiguration.ToolsVersion` and `ExplicitToolsVersionSpecified` | Include both value and explicitness, so explicit `Current` does not collide with implicit default `Current`. |
-| Evaluation settings | Effective `ProjectLoadSettings`, request flags, and `BuildParameters.Interactive` | Include only settings known before source loading that can change evaluation results. |
-| Startup/working directories and node count | `BuildParameters.StartupDirectory`, effective working directory, and `MaxNodeCount` | Include the exact directories for relative-path resolution and built-in properties, and the node count used by `$(MSBuildNodeCount)`. |
-| MSBuild environment-property dictionary | `BuildParameters.EnvironmentPropertiesInternal` | Fingerprint the exact dictionary MSBuild supplies as initial properties: include environment-variable names that are valid MSBuild/XML property names and are not reserved item/property names; exclude the others. Include MSBuild-synthesized values such as `MSBuildExtensionsPath*`, `LocalAppData`, and `MSBuildUserExtensionsPath`. |
-| Culture and UI culture | `BuildParameters.Culture` and `UICulture` | When the build request starts, capture `Culture.Name` and `UICulture.Name` once—for example `en-US` and `en-US`—and reuse those exact values in every project candidate key for that request. Encode them directly in the key; a separate hash is optional. |
-| ChangeWave state | `src/Framework/ChangeWaves.cs` and `Traits.MSBuildDisableFeaturesFromVersion` | Include the effective ChangeWave state in the evaluation-semantics ID because it can enable or disable evaluation behavior. |
-| Evaluation traits and escape hatches | `src/Framework/Traits.cs`. Examples: `IgnoreEmptyImports`, `IgnoreTreatAsLocalProperty`, `UseCaseSensitiveItemNames`, and `SdkReferencePropertyExpansion`. | Classify every value that can change the evaluated result and include it in the evaluation-semantics ID. Exclude logging/debug/performance-only traits. |
-| Evaluation feature switches | `src/Framework/FeatureSwitches.cs`. Examples: `RestrictPropertyFunctionReceivers`, `EnableSdkResolverDynamicLoading`, `EnableConfigurationFileToolsets`, and `EnableReflectiveTaskParameterTypes`. | Classify result-affecting switches and include them in the evaluation-semantics ID. A switch such as `EnableAllPropertyFunctions` makes evaluation non-cacheable instead. |
-| Evaluation process statics | Process-global fields read by evaluation. Examples in `src/Build/Utilities/Utilities.cs`: legacy/default tools-version behavior controlled by `MSBUILDLEGACYDEFAULTTOOLSVERSION` and `MSBUILDTREATHIGHERTOOLSVERSIONASCURRENT`. | Classify result-affecting statics and include their current values in the evaluation-semantics ID. |
-| XML-parser configuration | `ParserIgnoreConfiguration` and `Directory.Parse.config` | Include parser settings already known before source loading. Record project-discovered configuration files as entry observations rather than reading them just to construct the lookup key. |
-| Project source kind/provider | Identifies how the root project source is supplied: normal disk file, IDE-owned in-memory XML, remote object-model source, or another custom provider | Use a fixed value such as `DefaultDisk` for ordinary files. An IDE/custom host must provide a stable ID for its source semantics. The current MSBuild host interfaces do not expose this ID, so that is new plumbing. The mutable XML content/version remains entry metadata, not key data. |
+| Tools version | `BuildRequestConfiguration.ToolsVersion` | Match the tools-version value used by the existing project-configuration identity. |
 
+## Beyond the lookup key
+
+Other evaluation inputs still matter, but do not all need separate per-project-key fields.
+
+| Group | What it covers | Requirement before reuse |
+| --- | --- | --- |
+| Evaluation context | Imported environment properties; effective load settings and interactive mode; startup/working directories and node count; cultures; explicit/default tools-version selection; other result-affecting settings | Compare the effective context with the one used for the cached evaluation. Shared settings can be compared once per request; project-specific settings still need their own compatibility check. |
+| Dependencies | Project/import files, parser configuration files, registry values, SDK/toolset inputs, and other observations listed below | Validate the recorded dependencies. Project-discovered configuration belongs here, not in a lookup key that would require reading it first. |
+| Scope assumptions | One server/runtime and settings fixed for that lifetime; disk-backed project identity for the lookup above | Do not repeatedly hash values known to be fixed. If a supported host can change a setting, compare it as context or invalidate affected entries. Non-disk sources need the identity/version handling described in the host-support section. |
+
+The same lookup key can produce different `$(MSBuildNodeCount)` or imported environment-property values. MSBuild Server refreshes the environment, traits, directories, and cultures between requests, so those are not automatically server constants. Already-initialized effective ChangeWave state, unlike a refreshed raw environment value, can belong to server scope.
+
+This separation does not prescribe a new context hash or semantics-ID mechanism. It requires compatible evaluation conditions, current dependencies, and valid scope assumptions before a candidate is accepted.
 
 ---
 
@@ -180,7 +169,7 @@ Candidate platform choices:
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry | Exact stale-detection mechanism |
 | --- | --- | --- | --- |
-| Effective MSBuild toolset | After MSBuild reads the project request/source, it determines the effective toolset—normally `Current`—that supplies paths and default properties. **Example:** it supplies `$(MSBuildToolsPath)` and `$(MSBuildExtensionsPath32)`. | Fingerprint of the actual `Toolset` used: tools version/path, properties, selected subtoolset, and import search paths | Entry metadata, not part of the candidate key. Add new plumbing so `ToolsetProvider` precomputes a fingerprint for each toolset it holds. Before reuse, compare the stored fingerprint with the current toolset's fingerprint; if it differs or that toolset no longer exists, set `entry.IsStale = true`. |
+| Effective MSBuild toolset | After MSBuild reads the project request/source, it determines the effective toolset—normally `Current`—that supplies paths and default properties. **Example:** it supplies `$(MSBuildToolsPath)` and `$(MSBuildExtensionsPath32)`. | Fingerprint of the actual `Toolset` used: tools version/path, properties, selected subtoolset, and import search paths | Validate this state separately from the version in the lookup key. Compare the stored fingerprint with the current toolset's fingerprint; if it differs or that toolset no longer exists, set `entry.IsStale = true`. |
 | Toolset definition source | Older or custom hosts can define a toolset in an MSBuild configuration file or, on Windows, in the Registry. **Example:** the definition supplies `MSBuildToolsPath` and import fallback directories. | Configuration-file path or Windows Registry key used to load the toolset | Register the configuration file with the shared filesystem change service; a matching watcher event, USN/host delta, or validation mismatch sets the entry stale. On Windows, `RegNotifyChangeKeyValue` handles the Registry source. Rebuild the toolset before reevaluation. |
 
 ---
@@ -197,7 +186,7 @@ SDK request from project
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry | Exact stale-detection mechanism |
 | --- | --- | --- | --- |
-| Effective SDK location/environment | SDK resolution uses the effective `MSBuildSDKsPath` and build environment. **Example:** `MSBuildSDKsPath=C:\dotnet\sdk\10.0.100\Sdks`. | Effective `MSBuildSDKsPath`, selected SDK/result identity, and build-environment/provider token | Entry metadata, not part of the candidate key. Before reusing a candidate, validate the stored SDK/build-environment token. A mismatch sets `entry.IsStale = true`. MSBuild engine/runtime compatibility belongs to the cache namespace/header. |
+| Effective SDK location/environment | SDK resolution uses the effective `MSBuildSDKsPath` and build environment. **Example:** `MSBuildSDKsPath=C:\dotnet\sdk\10.0.100\Sdks`. | Effective `MSBuildSDKsPath`, selected SDK/result identity, and build-environment/provider token | Entry metadata, not part of the candidate key. Before reusing a candidate, validate the stored SDK/build-environment token. A mismatch sets `entry.IsStale = true`. MSBuild engine/runtime compatibility is covered by the server-scope assumptions. |
 | SDK request from project | The project asks for an SDK by name and optional version. **Example:** `<Project Sdk="Microsoft.NET.Sdk/10.0.100">`. | SDK name, version, and minimum version, plus the project/import file containing the request | Register the declaring file with the filesystem change service; a matching watcher event, USN/host delta, or validation mismatch sets the entry stale. For in-memory XML, use `ProjectXmlChanged` or `ProjectRootElement.Version`. |
 | Default SDK directory | The built-in resolver checks `MSBuildSDKsPath\<SdkName>\Sdk`. **Example:** `...\Sdks\Microsoft.NET.Sdk\Sdk`. | Exact directory path and whether it was present or missing | Register the directory-existence observation with the filesystem change service. A watcher event, USN/host delta, or validation mismatch for create/delete/rename/replacement sets the entry stale. A probe failure that cannot be distinguished from missing is non-cacheable. |
 | Resolver files and configuration | MSBuild finds and loads resolver plugins. **Example:** a resolver manifest, `Contoso.SdkResolver.dll`, `MSBUILDADDITIONALSDKRESOLVERSFOLDER`, workload manifests, or `NuGet.config`. | Resolver/configuration file paths, resolver-folder paths, and environment values used to find them | Treating default resolver binaries/manifests as stable requires an explicit installation-state assumption. Additional/custom resolver folders, workload manifests, and `NuGet.config` use the shared filesystem change service; environment-selected locations are compared with the next request snapshot. |
@@ -208,7 +197,7 @@ SDK request from project
 
 ### 4. Environment inputs
 
-Imported environment properties are already represented in the Candidate cache key section. This category covers environment values read on demand.
+Imported environment properties belong to the evaluation context, including MSBuild-synthesized values such as `MSBuildExtensionsPath*`. This category covers environment values read on demand.
 
 Use one immutable raw request-environment snapshot for supported environment APIs and validate against the next request's snapshot. Imported environment properties are only a filtered subset of the raw environment; enumeration and expansion need their own observations.
 
@@ -237,14 +226,14 @@ The comparison must preserve view order, default/missing values, fallback behavi
 
 ### 6. Machine and process values
 
-These are values read from the current computer or running MSBuild process that are not files, environment variables, or registry entries. Request-key values such as directories and cultures, and server-scope OS/runtime/architecture identity, should not be recorded again as separate dependencies.
+These are values read from the current computer or running MSBuild process that are not files, environment variables, or registry entries. Evaluation-context values such as directories and cultures, and server-scope OS/runtime/architecture identity, should not be recorded again as separate dependencies.
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry | Exact stale-detection mechanism |
 | --- | --- | --- | --- |
 | Logical-drive/volume set | Evaluation enumerates drives or mounts. **Example:** `$([System.Environment]::GetLogicalDrives())` can generate items for each available drive. | Ordered volume set plus host volume/mount token | Register a host volume-change callback and store the returned volume-set token. The callback, or a token mismatch checked before reuse, sets `entry.IsStale = true`. Without this host contract, an evaluation that calls `GetLogicalDrives` is non-cacheable. |
 | Server-lifetime values | Evaluation can read values fixed for the running MSBuild server. **Example:** `$([System.Environment]::MachineName)` returns the computer name and `$([System.Environment]::CommandLine)` returns the command that started the server process. | No separate observation; these values are part of the server/cache scope | No watcher or per-hit check. They are assumed not to change during the lifetime of this in-memory server cache. A new server process starts with an empty cache. |
-| Startup/effective evaluation directory | Evaluation can resolve relative paths against the build request's startup directory. **Example:** `$([System.IO.Path]::GetFullPath('config\settings.props'))`. | `BuildParameters.StartupDirectory` | Part of the candidate cache key. If it changes, the next request selects a different candidate. No watcher is needed. |
-| Processor count | Evaluation can use the available processor count. **Example:** `$([System.Environment]::ProcessorCount)` controls a property or condition. | Processor-count value returned during evaluation | There is no portable change notification. **Open question:** assume it is stable for the server lifetime, put it in the cache key, or make an evaluation that reads it non-cacheable. |
+| Startup/effective evaluation directory | Evaluation can resolve relative paths against the build request's startup directory. **Example:** `$([System.IO.Path]::GetFullPath('config\settings.props'))`. | Startup and effective working directories in the evaluation context | Compare with the context used by the cached evaluation. A mismatch rejects reuse even if the lookup key matches. No watcher is needed. |
+| Processor count | Evaluation can use the available processor count. **Example:** `$([System.Environment]::ProcessorCount)` controls a property or condition. | Processor-count value returned during evaluation | There is no portable change notification. **Open question:** assume it is stable for the server lifetime, compare it as evaluation context, or make an evaluation that reads it non-cacheable. |
 | Volatile process/time value | Evaluation reads a value expected to change without a usable notification. **Example:** `Environment.WorkingSet`, `Environment.StackTrace`, `Environment.TickCount`, `DateTime.Now`, or `DateTime.UtcNow`. | No stable observation | Non-cacheable: if evaluation reads one of these values, do not store the evaluation result. |
 
 ---
@@ -284,7 +273,7 @@ Use existing `ProjectRootElement.Version`, `ProjectXmlChanged`, and `ProjectChan
 Options:
 
 - assume it remains stable for the MSBuild server lifetime;
-- include the current value in every candidate cache key;
+- compare the current value as part of the evaluation context;
 - make only evaluations that read `ProcessorCount` non-cacheable.
 
 ---
@@ -300,16 +289,22 @@ Options:
 
 ## Correctness rule
 
-> Every value that can change the evaluated `ProjectInstance` must be either:
+> Reusing a cached `ProjectInstance` requires:
 >
-> 1. represented in `ProjectEvaluationLookupKey`;
-> 2. recorded as an observation with a defined change detector or value comparison that rejects stale or unverifiable entries; or
-> 3. classified as non-cacheable.
+> 1. matching project identity;
+> 2. compatible effective evaluation context;
+> 3. current recorded dependencies; and
+> 4. valid cache-scope assumptions.
 
-No row may use “when the value changes” as its detector. It must name the producer of the signal, the stored observation, the invalidating event/comparison, and the exact stale transition.
+Every result-affecting input must be covered by these checks or known to be fixed within the supported scope. Otherwise, reject reuse or classify the evaluation as non-cacheable.
+
+For mutable observations, “when the value changes” is not a detector. Name the signal or value comparison and the exact stale transition.
 
 MSBuild source and background:
 
+- [`ConfigurationMetadata` project identity](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Shared/ConfigurationMetadata.cs)
+- [`OutOfProcServerNode` request context](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Node/OutOfProcServerNode.cs)
+- [`ChangeWaves`](https://github.com/dotnet/msbuild/blob/main/src/Framework/ChangeWaves.cs)
 - [`Evaluator.Evaluate`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/Evaluator.cs)
 - [`FeatureSwitches`](https://github.com/dotnet/msbuild/blob/main/src/Framework/FeatureSwitches.cs)
 - [`Traits`](https://github.com/dotnet/msbuild/blob/main/src/Framework/Traits.cs)
