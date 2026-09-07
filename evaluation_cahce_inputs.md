@@ -163,10 +163,6 @@ The effective toolset will be covered by the [candidate cache key](#candidate-ca
 
 ### 4. Environment inputs
 
-Imported environment properties belong to the evaluation context, including MSBuild-synthesized values such as `MSBuildExtensionsPath*`. This category covers environment values read on demand.
-
-Use one immutable raw request-environment snapshot for supported environment APIs and validate against the next request's snapshot. Imported environment properties are only a filtered subset of the raw environment; enumeration and expansion need their own observations.
-
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
 | --- | --- | --- |
 | One environment variable | A property function reads one named value. **Example:** `$([System.Environment]::GetEnvironmentVariable('HOME'))` writes the current home directory into an evaluated property. | Name and value-or-missing result from the immutable raw request snapshot |
