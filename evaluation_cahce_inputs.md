@@ -232,7 +232,7 @@ Registry observations must preserve the read's semantics: key, value name, reque
 
 ### 6. Machine and process values
 
-These are values read from the current computer or running MSBuild process that are not files, environment variables, or registry entries. Evaluation-context values such as directories and cultures, and server-scope OS/runtime/architecture identity, should not be recorded again as separate dependencies.
+These are values read from the current computer or running MSBuild process that are not files, environment variables, or registry entries.
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
 | --- | --- | --- |
@@ -242,7 +242,7 @@ These are values read from the current computer or running MSBuild process that 
 | Processor count | Evaluation can use the available processor count. **Example:** `$([System.Environment]::ProcessorCount)` controls a property or condition. | Processor-count value returned during evaluation |
 | Volatile process/time value | Evaluation reads a value expected to change without a usable notification. **Example:** `Environment.WorkingSet`, `Environment.StackTrace`, `Environment.TickCount`, `DateTime.Now`, or `DateTime.UtcNow`. | No stable observation |
 
-**Invalidation:** Compare request directories and host volume tokens to detect changes such as a different drive set. Fixed server values need no per-hit check; `ProcessorCount` needs an explicit policy, while `DateTime.Now` makes evaluation non-cacheable.
+**Invalidation:** Check whether the request’s directories or available drives have changed. Values that stay fixed while the server runs need no rechecking. Evaluations that call  DateTime.Now  cannot be reused.
 
 ---
 
@@ -255,7 +255,7 @@ An IDE or another MSBuild API host can change project XML/state in memory withou
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
 | --- | --- | --- |
 | Unsaved changes to a loaded project | The IDE/host changes a `ProjectRootElement` or `Project` through the MSBuild API but does not save it. **Example:** `projectRootElement.AddProperty("LangVersion", "preview")` changes the next evaluation while the `.csproj` file on disk remains unchanged. | The source `Project`/`ProjectRootElement` object and its current version |
-| Host-created or remote in-memory project | The project source is generated or owned by the host instead of a normal disk file. **Example:** `ProjectRootElement.Create(XmlReader)` evaluates generated XML, or `ProjectRootElementLink` exposes a remote project object. | Stable host source identity and monotonically changing version |
+| Host-created or remote in-memory project | The project source is generated or owned by the host instead of a normal disk file. **Example:** `ProjectRootElement.Create(XmlReader)` evaluates generated XML, or `ProjectRootElementLink` exposes a remote project object. | Host source identity and  changing version |
 
 **Invalidation:** Use `ProjectXmlChanged`/`ProjectChanged` and source-version comparisons to detect changes such as an unsaved `LangVersion` edit. Reject reuse when host sources lack stable identity/version information.
 
