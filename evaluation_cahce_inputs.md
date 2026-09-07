@@ -219,14 +219,12 @@ Use one immutable raw request-environment snapshot for supported environment API
 
 ### 5. Windows registry inputs
 
-Registry observations must preserve the read's semantics: key, value name, requested views, missing values, fallbacks, and returned data. A logical returned value alone may not retain enough information to repeat the same request or identify all dependencies, particularly for environment-expanded values.
-
-| Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
+| Evaluation input | Example | Observation stored with the entry |
 | --- | --- | --- |
-| Existing Windows registry value | Evaluation reads an installed-component setting. **Example:** `$(Registry:HKEY_LOCAL_MACHINE\Software\Contoso@InstallPath)` or `[MSBuild]::GetRegistryValue` produces an import/tool path. | Hive, view, key, value name, type, and returned unexpanded data |
-| Missing Windows registry key/value | Evaluation falls back when a registry value is absent. **Example:** a missing `Contoso@InstallPath` causes `$(ContosoPath)` to use `C:\Default\Contoso`. | Missing leaf and nearest existing parent key |
+| Existing registry value | `$(Registry:HKEY_LOCAL_MACHINE\Software\Contoso@InstallPath)` supplies an import path. | Registry key and value |
+| Missing registry key/value | A missing `Contoso@InstallPath` makes evaluation use a default path. | Requested registry key/value and that it is missing |
 
-**Invalidation:** Compare reread values such as `Contoso@InstallPath`, or use `RegNotifyChangeKeyValue` on the key/nearest existing parent. Preserve views, missing/fallback values, array contents, and environment expansion; measure whether rereading is cheaper than maintaining notifications.
+**Invalidation:** A changed, added, or deleted value invalidates the cache entry. Measure whether rereading the value before reuse is cheaper and simpler than registry change notifications.
 
 ---
 
