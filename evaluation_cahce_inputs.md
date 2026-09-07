@@ -274,19 +274,7 @@ Use existing `ProjectRootElement.Version`, `ProjectXmlChanged`, and `ProjectChan
 
 ---
 
-## Open questions
 
-### How should `Environment.ProcessorCount` be handled?
-
-`ProcessorCount` can affect evaluation, but there is no portable event that reports when process affinity, container CPU limits, or the effective processor count changes.
-
-Options:
-
-- assume it remains stable for the MSBuild server lifetime;
-- compare the current value as part of the evaluation context;
-- make only evaluations that read `ProcessorCount` non-cacheable.
-
----
 
 ## Inputs that make evaluation non-cacheable
 
@@ -294,37 +282,3 @@ Options:
 | --- | --- | --- | --- |
 | Nondeterministic or unclassified property function | **Example:** `$([System.Guid]::NewGuid())` or `$([System.DateTime]::UtcNow)` is assigned to an evaluated property. | Property-function dispatch before/at invocation | Do not store the evaluation |
 | All-property-functions mode | **Example:** with `MSBUILDENABLEALLPROPERTYFUNCTIONS=1`, project XML invokes `Contoso.Build.State::ReadDatabaseValue()`. | Feature-switch check before lookup/admission | Bypass lookup and admission |
-
----
-
-## Correctness rule
-
-> Reusing a cached `ProjectInstance` requires:
->
-> 1. matching project identity;
-> 2. compatible effective evaluation context;
-> 3. current recorded dependencies; and
-> 4. valid cache-scope assumptions.
-
-Every result-affecting input must be covered by these checks or known to be fixed within the supported scope. Otherwise, reject reuse or classify the evaluation as non-cacheable.
-
-For mutable observations, “when the value changes” is not a detector. Name the signal or value comparison and the exact stale transition.
-
-MSBuild source and background:
-
-- [`ConfigurationMetadata` project identity](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Shared/ConfigurationMetadata.cs)
-- [`OutOfProcServerNode` request context](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Node/OutOfProcServerNode.cs)
-- [`ChangeWaves`](https://github.com/dotnet/msbuild/blob/main/src/Framework/ChangeWaves.cs)
-- [`ParserIgnoreConfiguration`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/ParserIgnoreConfiguration.cs)
-- [Tools-version selection policies](https://github.com/dotnet/msbuild/blob/main/src/Build/Utilities/Utilities.cs)
-- [`Evaluator.Evaluate`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/Evaluator.cs)
-- [`FeatureSwitches`](https://github.com/dotnet/msbuild/blob/main/src/Framework/FeatureSwitches.cs)
-- [`Traits`](https://github.com/dotnet/msbuild/blob/main/src/Framework/Traits.cs)
-- [`EvaluationContext`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/Context/EvaluationContext.cs)
-- [`CachingFileSystemWrapper`](https://github.com/dotnet/msbuild/blob/main/src/Framework/FileSystem/CachingFileSystemWrapper.cs)
-- [`ProjectRootElement.Version`](https://github.com/dotnet/msbuild/blob/main/src/Build/Construction/ProjectRootElement.cs)
-- [`ProjectCollection` change events](https://github.com/dotnet/msbuild/blob/main/src/Build/Definition/ProjectCollection.cs)
-- [`DefaultSdkResolver`](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Components/SdkResolution/DefaultSdkResolver.cs)
-- [`CachingSdkResolverService`](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Components/SdkResolution/CachingSdkResolverService.cs)
-- [`SolutionProjectGenerator.ScanProjectDependencies`](https://github.com/dotnet/msbuild/blob/main/src/Build/Construction/Solution/SolutionProjectGenerator.cs)
-- [MSBuild evaluation phase](https://learn.microsoft.com/visualstudio/msbuild/build-process-overview#evaluation-phase)
