@@ -71,17 +71,19 @@ flowchart LR
 
 ## Beyond the lookup key
 
-Other evaluation inputs still matter, but do not all need separate per-project-key fields.
+Unchanged project data is not enough: **MSBuild configuration controls how that data is interpreted**. The settings below can affect evaluation even when the project path, global properties, tools-version value, and recorded data dependencies match.
 
-| Group | What it covers | Requirement before reuse |
+| Configuration | What it can change | What reuse requires |
 | --- | --- | --- |
-| Evaluation context | Imported environment properties; effective load settings and interactive mode; startup/working directories and node count; cultures; explicit/default tools-version selection; other result-affecting settings | Compare the effective context with the one used for the cached evaluation. Shared settings can be compared once per request; project-specific settings still need their own compatibility check. |
-| Dependencies | Project/import files, parser configuration files, registry values, SDK/toolset inputs, and other observations listed below | Validate the recorded dependencies. Project-discovered configuration belongs here, not in a lookup key that would require reading it first. |
-| Scope assumptions | One server/runtime and settings fixed for that lifetime; disk-backed project identity for the lookup above | Do not repeatedly hash values known to be fixed. If a supported host can change a setting, compare it as context or invalidate affected entries. Non-disk sources need the identity/version handling described in the host-support section. |
+| **ChangeWave state** (`MSBUILDDISABLEFEATURESFROMVERSION`) | Enables or disables wave-gated evaluation behavior. | Account for the effective initialized wave, not just the current environment string. The effective wave is fixed after initialization during normal server operation, so it need not be added to every project key. |
+| **Evaluation traits and escape hatches** (`IgnoreTreatAsLocalProperty`, `UseCaseSensitiveItemNames`, `SdkReferencePropertyExpansion`) | Changes property precedence, item-name comparison, or expansion of SDK references. | Account for the effective settings used by the evaluation. Traits can be recreated between server requests; being stored in a static or readonly field does not make every trait server-constant. |
+| **Feature switches** (`RestrictPropertyFunctionReceivers`, `EnableSdkResolverDynamicLoading`) | Changes which property functions or SDK resolvers may run. | Fixed host configuration can cover these switches. If a supported host changes them, reject reuse of evaluations made under incompatible settings. All-property-functions mode follows the non-cacheable policy below. |
+| **Evaluation request options** (`ProjectLoadSettings`, `Interactive`, `MaxNodeCount`) | For example, `IgnoreMissingImports` changes import handling; interactive mode affects `MSBuildInteractive` and SDK resolution; node count changes `MSBuildNodeCount`. | Require compatible effective options, including project-specific flags. Logging-only options do not belong in this comparison. |
+| **Culture and UI culture** | Can change culture-sensitive property-function results, such as string casing or parsing. | Use the cultures of the current evaluation request, not the cultures that started the server. |
+| **Tools-version selection policy** (`ExplicitToolsVersionSpecified`, legacy/default tools-version settings) | An explicit tools-version override can follow different selection logic from an implicit default, even when the lookup's tools-version string matches. | Preserve explicit/default request semantics. Process-initialized settings such as `MSBUILDLEGACYDEFAULTTOOLSVERSION` and `MSBUILDTREATHIGHERTOOLSVERSIONASCURRENT` can remain part of server scope. |
+| **XML-parser rules** (`ParserIgnoreConfiguration`) | Determines which unknown XML attributes or elements are ignored instead of rejected. | Require compatible effective parsing rules. Their source configuration files, such as `Directory.Parse.config`, are filesystem dependencies described below. |
 
-The same lookup key can produce different `$(MSBuildNodeCount)` or imported environment-property values. MSBuild Server refreshes the environment, traits, directories, and cultures between requests, so those are not automatically server constants. Already-initialized effective ChangeWave state, unlike a refreshed raw environment value, can belong to server scope.
-
-This separation does not prescribe a new context hash or semantics-ID mechanism. It requires compatible evaluation conditions, current dependencies, and valid scope assumptions before a candidate is accepted.
+These settings do **not** all require new lookup-key fields. Fixed server settings can be covered by the cache's lifetime; settings that can vary need an evaluation-context comparison or invalidation. If an existing environment/configuration comparison already covers a setting, do not record or hash it again.
 
 ---
 
@@ -305,6 +307,8 @@ MSBuild source and background:
 - [`ConfigurationMetadata` project identity](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Shared/ConfigurationMetadata.cs)
 - [`OutOfProcServerNode` request context](https://github.com/dotnet/msbuild/blob/main/src/Build/BackEnd/Node/OutOfProcServerNode.cs)
 - [`ChangeWaves`](https://github.com/dotnet/msbuild/blob/main/src/Framework/ChangeWaves.cs)
+- [`ParserIgnoreConfiguration`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/ParserIgnoreConfiguration.cs)
+- [Tools-version selection policies](https://github.com/dotnet/msbuild/blob/main/src/Build/Utilities/Utilities.cs)
 - [`Evaluator.Evaluate`](https://github.com/dotnet/msbuild/blob/main/src/Build/Evaluation/Evaluator.cs)
 - [`FeatureSwitches`](https://github.com/dotnet/msbuild/blob/main/src/Framework/FeatureSwitches.cs)
 - [`Traits`](https://github.com/dotnet/msbuild/blob/main/src/Framework/Traits.cs)
