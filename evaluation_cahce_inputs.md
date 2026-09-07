@@ -42,7 +42,7 @@ An inner loop means repeated edit/build runs in the same checkout and server, wi
 
 The normalized project path, complete global properties, and toolset version already form MSBuild’s project-configuration key.
 
-For cross-build reuse, we will extend the toolset part to identify its actual configuration, not just its version name.
+ We should **extend the toolset** part to identify its actual configuration, not just its version name.
 
 ```mermaid
 flowchart LR
@@ -126,18 +126,14 @@ Record the normalized paths that evaluation reads, checks, or searches, includin
 | Permission/accessibility result | Evaluation sees different paths or outcomes because of access control. **Example:** `Directory.GetFiles('generated')` returns fewer entries when one child directory is unreadable, or an import probe receives access denied. | Path, operation, and authoritative success/failure result |
 | Symlink/reparse-point input | A project reads a path that is a link to another file. **Example:** `<Import Project="current.props" />` initially resolves `current.props` to `v1.props`; before the next build, the link is changed to point to `v2.props`. | The link path, resolved target path, and target file identity read by evaluation |
 
-Path-based invalidation does not need a separate search history or a copy of glob expressions/results. Changes to the files or configuration defining those searches must also invalidate reuse.
-
 **Invalidation:** Use filesystem notifications, journals, or timestamp checks to detect edits to `version.txt`, newly created `generated.props`, or changes to `src\**\*.cs` membership. Metadata, permission, and link changes also matter; reject reuse when checks cannot establish validity.
 
 ### Filesystem invalidation options
 
 - **Timestamp checks:** Compare file/folder timestamps and file sizes before reuse. Cost grows with input count, and unchanged metadata can hide edits.
 - **FileSystemWatcher (Windows, Linux, macOS):** Invalidate affected evaluations when file or directory changes are reported.
-- **USN journal (supported Windows volumes):** Read filesystem change records to identify changed dependencies.
+- **USN journal (Windows):** Read filesystem change records to identify changed dependencies.
 - **Direct comparison:** Compare file contents and directory listings with saved observations. More expensive, but useful when other checks are insufficient.
-
-If changes cannot be tracked reliably, revalidate the inputs or reevaluate the project.
 
 ---
 
