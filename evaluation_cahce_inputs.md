@@ -42,7 +42,6 @@ An inner loop means repeated edit/build runs in the same checkout and server, wi
 
 The normalized project path, complete global properties, and toolset version already form MSBuild’s project-configuration key.
 
-Keep this identity as the lookup key. It selects a candidate without loading project XML or resolving its dependencies again; matching it alone does not authorize reuse.
 
 ```mermaid
 flowchart LR
@@ -73,23 +72,22 @@ flowchart LR
 
 Unchanged project data is not enough: **MSBuild configuration controls how that data is interpreted**. The settings below can affect evaluation even when the project path, global properties, tools-version value, and recorded data dependencies match.
 
-| Configuration | What it can change | What reuse requires |
-| --- | --- | --- |
-| **ChangeWave state** (`MSBUILDDISABLEFEATURESFROMVERSION`) | Enables or disables wave-gated evaluation behavior. | Account for the effective initialized wave, not just the current environment string. The effective wave is fixed after initialization during normal server operation, so it need not be added to every project key. |
-| **Evaluation traits and escape hatches** (`IgnoreTreatAsLocalProperty`, `UseCaseSensitiveItemNames`, `SdkReferencePropertyExpansion`) | Changes property precedence, item-name comparison, or expansion of SDK references. | Account for the effective settings used by the evaluation. Traits can be recreated between server requests; being stored in a static or readonly field does not make every trait server-constant. |
-| **Feature switches** (`RestrictPropertyFunctionReceivers`, `EnableSdkResolverDynamicLoading`) | Changes which property functions or SDK resolvers may run. | Fixed host configuration can cover these switches. If a supported host changes them, reject reuse of evaluations made under incompatible settings. All-property-functions mode follows the non-cacheable policy below. |
-| **Evaluation request options** (`ProjectLoadSettings`, `Interactive`, `MaxNodeCount`) | For example, `IgnoreMissingImports` changes import handling; interactive mode affects `MSBuildInteractive` and SDK resolution; node count changes `MSBuildNodeCount`. | Require compatible effective options, including project-specific flags. Logging-only options do not belong in this comparison. |
-| **Culture and UI culture** | Can change culture-sensitive property-function results, such as string casing or parsing. | Use the cultures of the current evaluation request, not the cultures that started the server. |
-| **Tools-version selection policy** (`ExplicitToolsVersionSpecified`, legacy/default tools-version settings) | An explicit tools-version override can follow different selection logic from an implicit default, even when the lookup's tools-version string matches. | Preserve explicit/default request semantics. Process-initialized settings such as `MSBUILDLEGACYDEFAULTTOOLSVERSION` and `MSBUILDTREATHIGHERTOOLSVERSIONASCURRENT` can remain part of server scope. |
-| **XML-parser rules** (`ParserIgnoreConfiguration`) | Determines which unknown XML attributes or elements are ignored instead of rejected. | Require compatible effective parsing rules. Their source configuration files, such as `Directory.Parse.config`, are filesystem dependencies described below. |
+| Configuration | What it can change | 
+| --- | --- |
+| **ChangeWave state** (`MSBUILDDISABLEFEATURESFROMVERSION`) | Disables behavior changes introduced at or after the specified MSBuild version, making affected features use their previous behavior|
+| **Evaluation traits and escape hatches** (`IgnoreTreatAsLocalProperty`, `UseCaseSensitiveItemNames`, `SdkReferencePropertyExpansion`) | Changes property precedence, item-name comparison, or expansion of SDK references. | 
+| **Feature switches** (`RestrictPropertyFunctionReceivers`, `EnableSdkResolverDynamicLoading`) | Changes which property functions or SDK resolvers may run. | 
+| **Evaluation request options** (`ProjectLoadSettings`, `Interactive`, `MaxNodeCount`) | For example, `IgnoreMissingImports` changes import handling; interactive mode affects `MSBuildInteractive` and SDK resolution; node count changes `MSBuildNodeCount`. | 
+| **Culture and UI culture** | Can change culture-sensitive property-function results, such as string casing or parsing. | 
+| **Tools-version selection policy** (`ExplicitToolsVersionSpecified`, legacy/default tools-version settings) | An explicit tools-version override can follow different selection logic from an implicit default, even when the lookup's tools-version string matches. |
+| **XML-parser rules** (`ParserIgnoreConfiguration`) | Determines which unknown XML attributes or elements are ignored instead of rejected. |
 
-These settings do **not** all require new lookup-key fields. Fixed server settings can be covered by the cache's lifetime; settings that can vary need an evaluation-context comparison or invalidation. If an existing environment/configuration comparison already covers a setting, do not record or hash it again.
 
 ---
 
 ## Cached evaluation-input categories
 
-Only the input categories in this section share a numeric list. Later sections describe cache policy and correctness rules rather than additional input categories.
+
 
 ```mermaid
 flowchart TB
