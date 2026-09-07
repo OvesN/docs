@@ -112,18 +112,20 @@ flowchart TB
 
 ### 1. Filesystem inputs
 
-Every supported filesystem read/probe/enumeration must pass through an observation layer. The observation must describe the value actually consumed.
+Record the normalized paths that evaluation reads, checks, or searches, including missing paths, and the state needed to detect changes.
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
 | --- | --- | --- |
-| File content read during evaluation | Evaluation reads the contents of a file. **Example:** the root project, imported `.props`/`.targets`, and a supported `$([System.IO.File]::ReadAllText('version.txt'))` call. | Normalized path of every file whose contents were read during evaluation |
-| File/directory existence probe | Evaluation branches on whether a path exists and what kind it is. **Example:** `Exists('generated.props')` can decide whether to import a file, while `$([System.IO.Directory]::Exists('generated'))` can decide whether to add generated-source items. | Requested kind (`File`, `Directory`, or either), path, and authoritative outcome: `Present(actual kind)` or `NotFound`. |
-| Import fallback search paths | For an import that directly uses a property configured in the toolset's `<projectImportSearchPaths>`, MSBuild tries the property's current value and then each configured fallback directory in order. **Example:** `MSBuildExtensionsPath=C:\Primary`, with fallbacks `C:\Fallback1;C:\Fallback2`, makes `<Import Project="$(MSBuildExtensionsPath)\Contoso\Custom.targets" />` try those three directories in that order. | Ordered candidate paths, whether each was `Present` or `NotFound`, and the file that was selected |
-| Upward file search | Evaluation searches the project directory and then each parent directory. **Example:** `GetPathOfFileAbove`, `GetDirectoryNameOfFileAbove`, and `Directory.Build.props`/`Directory.Build.targets` discovery select the nearest matching file. | Starting directory, searched file name, and selected file path—or that no file was found |
-| Directory membership or glob | Evaluation expands a filtered directory set. **Example:** `<Compile Include="src\**\*.cs" Exclude="src\obj\**\*" />` produces the evaluated `@(Compile)` items. | Base directory, include/exclude glob strings, and the expanded list of paths returned to evaluation |
+| File content read during evaluation | Evaluation reads the contents of a file. **Example:** the root project, imported `.props`/`.targets`, and a supported `$([System.IO.File]::ReadAllText('version.txt'))` call. | File path and state used for change detection, such as last-write time and size |
+| File/directory existence probe | Evaluation branches on whether a path exists and what kind it is. **Example:** `Exists('generated.props')` can decide whether to import a file, while `$([System.IO.Directory]::Exists('generated'))` can decide whether to add generated-source items. | Path and observed kind: file, directory, or missing |
+| Import fallback search paths | For an import that directly uses a property configured in the toolset's `<projectImportSearchPaths>`, MSBuild tries the property's current value and then each configured fallback directory in order. **Example:** `MSBuildExtensionsPath=C:\Primary`, with fallbacks `C:\Fallback1;C:\Fallback2`, makes `<Import Project="$(MSBuildExtensionsPath)\Contoso\Custom.targets" />` try those three directories in that order. | Paths actually checked and their state, including missing candidates or missing fallback directories, plus the imported file's state |
+| Upward file search | Evaluation searches the project directory and then each parent directory. **Example:** `GetPathOfFileAbove`, `GetDirectoryNameOfFileAbove`, and `Directory.Build.props`/`Directory.Build.targets` discovery select the nearest matching file. | Each candidate path checked, including missing candidates, plus the selected file's state |
+| Directory membership or glob | Evaluation expands a filtered directory set. **Example:** `<Compile Include="src\**\*.cs" Exclude="src\obj\**\*" />` produces the evaluated `@(Compile)` items. | Directories traversed or probed, including missing roots, and their state |
 | Metadata value | Evaluation reads filesystem metadata. **Example:** `<Stamp Include="@(Compile->'%(ModifiedTime)')" />` reads a source timestamp. MSBuild also compares project/import write times for `$(MSBuildAllProjects)`: build 1 can select newer `b.props`; after the user edits `a.props`, build 2 can select `a.props`. | Path, metadata field, and value returned to evaluation |
 | Permission/accessibility result | Evaluation sees different paths or outcomes because of access control. **Example:** `Directory.GetFiles('generated')` returns fewer entries when one child directory is unreadable, or an import probe receives access denied. | Path, operation, and authoritative success/failure result |
 | Symlink/reparse-point input | A project reads a path that is a link to another file. **Example:** `<Import Project="current.props" />` initially resolves `current.props` to `v1.props`; before the next build, the link is changed to point to `v2.props`. | The link path, resolved target path, and target file identity read by evaluation |
+
+Path-based invalidation does not need a separate search history or a copy of glob expressions/results. Changes to the files or configuration defining those searches must also invalidate reuse.
 
 **Invalidation:** Use filesystem notifications, journals, or timestamp checks to detect edits to `version.txt`, newly created `generated.props`, or changes to `src\**\*.cs` membership. Metadata, permission, and link changes also matter; reject reuse when checks cannot establish validity.
 
@@ -136,13 +138,6 @@ For glob membership, record the directories traversed during expansion and compa
 The scan cost grows with the number of recorded paths. Unchanged timestamps/lengths do not prove unchanged contents: metadata-preserving edits, parent-link changes, and races during recording can be missed. These limitations may require content fingerprints, stronger change tracking, or conservative invalidation.
 
 ### Live filesystem detectors and alternatives
-
-An observation layer should describe each supported filesystem operation:
-
-- file read → file path;
-- existence probe → path, requested kind, and `Present`/`NotFound`;
-- glob or directory enumeration → base directory, include/exclude expressions, and expanded paths;
-- metadata read → path, metadata field, and returned value.
 
 Dependency discovery and later change detection are separate. The in-process observation layer discovers what evaluation used. A watcher, journal, host delta, or validation step later decides whether those recorded inputs changed.
 
