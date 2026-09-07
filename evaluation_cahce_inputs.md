@@ -130,29 +130,14 @@ Path-based invalidation does not need a separate search history or a copy of glo
 
 **Invalidation:** Use filesystem notifications, journals, or timestamp checks to detect edits to `version.txt`, newly created `generated.props`, or changes to `src\**\*.cs` membership. Metadata, permission, and link changes also matter; reject reuse when checks cannot establish validity.
 
-### Timestamp-based filesystem validation
+### Filesystem invalidation options
 
-One option is to record each normalized path's kind (`Missing`, `File`, or `Directory`), UTC last-write timestamp, and file length. Before reuse, stat those paths again and compare the tuples. A mismatch or failed check rejects reuse. This detects creation, deletion, kind changes, and ordinary edits without rereading file contents.
+- **Timestamp checks:** Compare file/folder timestamps and file sizes before reuse. Cost grows with input count, and unchanged metadata can hide edits.
+- **FileSystemWatcher (Windows, Linux, macOS):** Invalidate affected evaluations when file or directory changes are reported.
+- **USN journal (supported Windows volumes):** Read filesystem change records to identify changed dependencies.
+- **Direct comparison:** Compare file contents and directory listings with saved observations. More expensive, but useful when other checks are insufficient.
 
-For glob membership, record the directories traversed during expansion and compare their timestamps. Include dependencies of any reused glob results. This can avoid re-expanding every glob during validation.
-
-The scan cost grows with the number of recorded paths. Unchanged timestamps/lengths do not prove unchanged contents: metadata-preserving edits, parent-link changes, and races during recording can be missed. These limitations may require content fingerprints, stronger change tracking, or conservative invalidation.
-
-### Live filesystem detectors and alternatives
-
-Dependency discovery and later change detection are separate. The in-process observation layer discovers what evaluation used. A watcher, journal, host delta, or validation step later decides whether those recorded inputs changed.
-
-If a notification-based design is chosen, use one shared change service per root/volume and a reverse index from recorded input identity to cache entries. Do not create one watcher or journal cursor per entry.
-
-| Change-detection approach | Platform/lifetime | How it marks an entry stale | Strength and cost |
-| --- | --- | --- | --- |
-| Timestamp/metadata validation | Cross-platform; before reuse | Compare each recorded path's kind, last-write time, and length with a fresh stat; reject reuse on the first difference or failure. | Linear in the recorded path count; does not reread contents. Subject to the metadata and race limitations above. |
-| `.NET FileSystemWatcher` | Windows, Linux, and macOS; running server only | A matching `Changed`, `Created`, `Deleted`, or `Renamed` callback is mapped through the reverse index and sets `entry.IsStale = true`. Error, overflow, or watched-root loss broadly stales the affected root. | Low idle cost and simple deployment, but callback delivery can overflow, race, or be coalesced. It is an invalidation accelerator, not standalone proof. |
-| Windows USN change journal | Windows local NTFS/ReFS volumes; can cover running-server and persistent-cache history while the journal remains continuous | Keep one cursor per volume. Scan records since the previous cursor, map file IDs/reasons through the reverse index, and set matching entries stale. Journal reset, wrap, or inaccessible state broadly invalidates or falls back to validation. | Stronger historical change source than directory callbacks; requires a volume handle, cursor management, and journal scanning. Do not store one USN per entry. |
-| Manifest validation | Cross-platform; any cache lifetime | Re-read/re-probe/re-enumerate recorded inputs and compare with stored observations. Any mismatch sets the entry stale. | Portable correctness fallback, but highest I/O/CPU cost. Use on detector uncertainty rather than every healthy server-local hit. |
-| Persistent native FSEvents IDs | macOS; possible future persistent optimization | Persist a per-volume event ID, read events since it, and stale affected subtrees. Dropped events, root changes, ID discontinuity, or coalescing uncertainty require validation/broad invalidation. | Requires native interop; events remain hints rather than complete current-state proof. |
-
-
+If changes cannot be tracked reliably, revalidate the inputs or reevaluate the project.
 
 ---
 
