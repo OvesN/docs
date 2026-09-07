@@ -248,6 +248,8 @@ These are values read from the current computer or running MSBuild process that 
 
 ### 7. Unsaved IDE/object-model project inputs
 
+An IDE/object-model host uses the `Microsoft.Build` APIs directly, for example Visual Studio evaluating unsaved XML for IntelliSense or design-time features. A host can also submit a `Project.CreateProjectInstance()` result through `BuildRequestData`.
+
 An IDE or another MSBuild API host can change project XML/state in memory without saving the project file. A filesystem watcher sees no change, but the cached evaluation must still become stale.
 
 | Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
@@ -256,21 +258,6 @@ An IDE or another MSBuild API host can change project XML/state in memory withou
 | Host-created or remote in-memory project | The project source is generated or owned by the host instead of a normal disk file. **Example:** `ProjectRootElement.Create(XmlReader)` evaluates generated XML, or `ProjectRootElementLink` exposes a remote project object. | Stable host source identity and monotonically changing version |
 
 **Invalidation:** Use `ProjectXmlChanged`/`ProjectChanged` and source-version comparisons to detect changes such as an unsaved `LangVersion` edit. Reject reuse when host sources lack stable identity/version information.
-
----
-
-## IDE/object-model host support
-
-An IDE/object-model host is a program that uses the `Microsoft.Build` APIs directly instead of asking MSBuild to load only a project-file path.
-
-The eventual cache should support these hosts. Real use cases include:
-
-- Visual Studio or another project system evaluating unsaved project XML for IntelliSense and design-time features;
-- a tool creating a `ProjectRootElement` from `XmlReader` or generated XML;
-- a host calling `Project.CreateProjectInstance()` and submitting that `ProjectInstance` through `BuildRequestData`;
-- object-model remoting through `ProjectRootElementLink`.
-
-Use existing `ProjectRootElement.Version`, `ProjectXmlChanged`, and `ProjectChanged` for API-edited projects. In-memory/generated XML and remote-linked projects must provide stable source identity and version tokens; without that contract, that individual evaluation is non-cacheable.
 
 ---
 
