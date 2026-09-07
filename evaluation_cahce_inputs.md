@@ -42,14 +42,15 @@ An inner loop means repeated edit/build runs in the same checkout and server, wi
 
 The normalized project path, complete global properties, and toolset version already form MSBuild’s project-configuration key.
 
+For cross-build reuse, we will extend the toolset part to identify its actual configuration, not just its version name.
 
 ```mermaid
 flowchart LR
     Project["<b>Normalized project path</b>"]
     Globals["<b>Complete global properties</b>"]
-    Tools["<b>Tools version</b>"]
+    Tools["<b>Toolset identity</b>"]
 
-    Key["Project-configuration key"]
+    Key["Evaluation cache key"]
 
     Project --> Key
     Globals --> Key
@@ -66,7 +67,7 @@ flowchart LR
 | --- | --- | --- |
 | Project path | `BuildRequestConfiguration.ProjectFullPath` | Use the normalized path for disk-backed projects. |
 | Complete global properties | `BuildRequestConfiguration.GlobalProperties` | Include every property using MSBuild's case-insensitive name semantics and exact values. |
-| Tools version | `BuildRequestConfiguration.ToolsVersion` | Match the tools-version value used by the existing project-configuration identity. |
+| Toolset | `BuildRequestConfiguration.ToolsVersion` and `Toolset` | Include version, tools path, selected subtoolset, and a fingerprint of the current toolset configuration. |
 
 ## Beyond the lookup key
 
@@ -157,12 +158,7 @@ If a notification-based design is chosen, use one shared change service per root
 
 ### 2. Toolset inputs
 
-| Evaluation input | Where evaluation uses it (concrete example) | Observation stored with the entry |
-| --- | --- | --- |
-| Effective MSBuild toolset | After MSBuild reads the project request/source, it determines the effective toolset—normally `Current`—that supplies paths and default properties. **Example:** it supplies `$(MSBuildToolsPath)` and `$(MSBuildExtensionsPath32)`. | Fingerprint of the actual `Toolset` used: tools version/path, properties, selected subtoolset, and import search paths |
-| Toolset definition source | Older or custom hosts can define a toolset in an MSBuild configuration file or, on Windows, in the Registry. **Example:** the definition supplies `MSBuildToolsPath` and import fallback directories. | Configuration-file path or Windows Registry key used to load the toolset |
-
-**Invalidation:** Compare the effective toolset fingerprint and monitor its configuration-file or registry source. A changed `MSBuildToolsPath` or import-search path invalidates affected evaluations.
+The effective toolset will be covered by the [candidate cache key](#candidate-cache-key), not recorded as a separate dependency.
 
 ---
 
